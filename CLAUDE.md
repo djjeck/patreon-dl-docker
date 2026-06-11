@@ -54,13 +54,22 @@ add it to both functions to include it in the automated sync.
 
 ## Testing a build locally
 
+Run the integration test suite (builds the image automatically if `TEST_IMAGE_TAG` is not set):
+
 ```sh
-docker build -t patreon-dl-docker:local .
-docker run --rm patreon-dl-docker:local patreon-dl --version
-docker run --rm patreon-dl-docker:local yt-dlp --version
-docker run --rm patreon-dl-docker:local deno --version
-docker run --rm patreon-dl-docker:local supercronic --version
+pip install -r requirements-test.txt
+pytest -v
 ```
+
+To skip the image build (e.g. after `docker build -t myimage:local .`):
+
+```sh
+TEST_IMAGE_TAG=myimage:local pytest -v
+```
+
+The test suite covers entrypoint behaviour only — tool smoke tests, pass-through mode,
+`out.dir` validation, the no-DB guidance branch, and the DB-present server start. It
+does not connect to Patreon or test patreon-dl's download logic.
 
 ## Upstream references
 
