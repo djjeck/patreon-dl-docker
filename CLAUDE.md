@@ -4,24 +4,46 @@ Docker image wrapping [patreon-dl](https://github.com/patrickkfkan/patreon-dl) w
 
 ## Image versioning
 
-Image tags track the `patreon-dl` npm package version (e.g., `3.9.0`). The full automated flow:
+Image tags track the `patreon-dl` npm package version (e.g., `3.9.0`). Every push to `main` publishes
+all versioned tags — e.g. `x.y.z`, `x.y.z-YYYYMMDD`, `x.y`, and `latest` — in addition to `edge` and
+`edge-YYYYMMDD`. This means `main` must always be in a shippable state (see Branch discipline below).
+
+The date suffix (`-YYYYMMDD`) allows multiple container releases within the same upstream version —
+e.g. when a dependency bump or entrypoint fix warrants a new image without a new `patreon-dl` release.
+Users are encouraged to pin to the bare version tag (e.g. `3.9.0`), which always points to the latest
+container build for that upstream version.
+
+The full automated flow when `patreon-dl` releases a new version:
 
 1. Dependabot opens a PR bumping `patreon-dl` in `package.json`
 2. PR is merged to `main`
 3. `auto-tag.yml` fetches `example.conf` from the upstream patreon-dl repo at the new version tag
 4. `auto-tag.yml` commits the updated `config/config.conf.example` to `main` (if changed)
 5. `auto-tag.yml` creates and pushes `v3.10.0` at the resulting HEAD
-6. `build-push.yml` fires on the tag, verifies `config/config.conf.example` matches upstream, then publishes `3.10.0`, `3.10`, and `latest` to GHCR
+6. `build-push.yml` fires on the tag push, verifies `config/config.conf.example` matches upstream,
+   then publishes all tags to GHCR
 
-**Requires a `CONTENTS_PAT` repo secret** — a fine-grained PAT with "Contents: write" on this repo. Without it the tag push uses `GITHUB_TOKEN` and does not trigger `build-push.yml` automatically. Create one at GitHub → Settings → Developer settings → Fine-grained personal access tokens.
+**Requires a `CONTENTS_PAT` repo secret** — a fine-grained PAT with "Contents: write" on this repo.
+Without it the tag push uses `GITHUB_TOKEN` and does not trigger `build-push.yml` automatically.
+Create one at GitHub → Settings → Developer settings → Fine-grained personal access tokens.
 
-`yt-dlp` bumps (via `requirements.txt`) follow the same Dependabot flow but only rebuild the `edge` tag. They are bundled into the image on the next patreon-dl release.
+`yt-dlp` bumps (via `requirements.txt`) follow the same Dependabot flow but only rebuild the image
+under the current version tags. They do not bump the version number.
 
 **Deno and supercronic** are not tracked by Dependabot. To update them manually:
 
 1. Check their latest releases (links in the Dependencies table below)
 2. Update the relevant `ARG` in `Dockerfile`
-3. Commit and merge — `edge` updates, and the new version is included in the next patreon-dl release tag
+3. Commit and merge to `main` — all version tags are republished with the updated image
+
+## Branch discipline
+
+`main` is always shippable. Every push to `main` republishes `latest`, `x.y.z`, and `x.y` — there
+is no pre-release state on this branch.
+
+**Do all work-in-progress on a feature branch.** Only merge to `main` when the change is complete
+and tested. This applies to all changes: dependency bumps, entrypoint fixes, CI changes, and
+Dockerfile updates.
 
 ## Entrypoint behaviour
 

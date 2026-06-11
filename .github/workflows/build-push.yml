@@ -48,9 +48,13 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Set build date
-        id: build-date
-        run: echo "value=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+      - name: Set build metadata
+        id: meta-vars
+        run: |
+          echo "date=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+          VERSION=$(node -p "require('./package.json').dependencies['patreon-dl']")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "minor=$(echo "$VERSION" | cut -d. -f1,2)" >> $GITHUB_OUTPUT
 
       - name: Extract metadata
         id: meta
@@ -58,15 +62,13 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-            type=raw,value={{version}}-${{ env.BUILD_DATE }},enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=${{ steps.meta-vars.outputs.version }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=${{ steps.meta-vars.outputs.version }}-${{ steps.meta-vars.outputs.date }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=${{ steps.meta-vars.outputs.minor }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
             type=edge,branch=main
-            type=raw,value=edge-${{ env.BUILD_DATE }},enable=${{ github.ref_type != 'tag' && github.event_name != 'pull_request' }}
+            type=raw,value=edge-${{ steps.meta-vars.outputs.date }},enable=${{ github.ref_type != 'tag' && github.event_name != 'pull_request' }}
             type=ref,event=pr
-        env:
-          BUILD_DATE: ${{ steps.build-date.outputs.value }}
 
       - name: Build image
         uses: docker/build-push-action@v7
@@ -140,9 +142,13 @@ jobs:
       - name: Load image
         run: docker load -i /tmp/image.tar
 
-      - name: Set build date
-        id: build-date
-        run: echo "value=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+      - name: Set build metadata
+        id: meta-vars
+        run: |
+          echo "date=$(date -u +%Y%m%d)" >> $GITHUB_OUTPUT
+          VERSION=$(node -p "require('./package.json').dependencies['patreon-dl']")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "minor=$(echo "$VERSION" | cut -d. -f1,2)" >> $GITHUB_OUTPUT
 
       - name: Extract metadata
         id: meta
@@ -150,15 +156,13 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
-            type=raw,value={{version}}-${{ env.BUILD_DATE }},enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=${{ steps.meta-vars.outputs.version }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=${{ steps.meta-vars.outputs.version }}-${{ steps.meta-vars.outputs.date }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=${{ steps.meta-vars.outputs.minor }},enable=${{ github.event_name != 'pull_request' }}
+            type=raw,value=latest,enable=${{ github.event_name != 'pull_request' }}
             type=edge,branch=main
-            type=raw,value=edge-${{ env.BUILD_DATE }},enable=${{ github.ref_type != 'tag' && github.event_name != 'pull_request' }}
+            type=raw,value=edge-${{ steps.meta-vars.outputs.date }},enable=${{ github.ref_type != 'tag' && github.event_name != 'pull_request' }}
             type=ref,event=pr
-        env:
-          BUILD_DATE: ${{ steps.build-date.outputs.value }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
