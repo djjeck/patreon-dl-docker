@@ -1,0 +1,79 @@
+name: Build and push
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify-examples:
+    # Only verify on tag pushes, just before publishing a versioned image.
+    # PRs are excluded to avoid failing Dependabot package-bump PRs — syncing
+    # happens after merge via auto-tag.yml, not during the PR.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify example files match upstream
+        run: |
+          VERSION=$(node -p "require('./package.json').dependencies['patreon-dl']")
+          TAG="v${VERSION}"
+          BASE="https://raw.githubusercontent.com/patrickkfkan/patreon-dl/${TAG}"
+
+          # Mirror the fetch_upstream calls in auto-tag.yml — keep these in sync.
+          verify_upstream() {
+            local remote="$1" local_path="$2"
+            echo "Verifying ${local_path} against upstream ${TAG}/${remote}..."
+            UPSTREAM=$(curl -fsSL "${BASE}/${remote}")
+            LOCAL=$(cat "${local_path}")
+            if [ "${UPSTREAM}" != "${LOCAL}" ]; then
+              echo "FAIL: ${local_path} does not match upstream ${TAG}/${remote}" >&2
+              diff <(echo "${UPSTREAM}") <(echo "${LOCAL}") >&2
+              exit 1
+            fi
+            echo "OK"
+          }
+
+          verify_upstream example.conf config/config.conf.example
+
+  build:
+    needs: [verify-examples]
+    if: always() && (needs.verify-examples.result == 'success' || needs.verify-examples.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+            type=edge,branch=main
+            type=ref,event=pr
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

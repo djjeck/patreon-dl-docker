@@ -1,0 +1,9 @@
+# One Patreon creator URL per line.
+# Comments (lines starting with #) and blank lines are ignored.
+# Posts feed — archives all posts from the creator:
+# https://www.patreon.com/creatorname/posts
+#
+# Shop — archives shop products (add separately if the creator has a shop):
+# https://www.patreon.com/creatorname/shop
+
+https://www.patreon.com/example_creator/posts

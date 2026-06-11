@@ -1,0 +1,23 @@
+services:
+  patreon-dl:
+    # Pin to a specific version tag in production (e.g. ghcr.io/djjeck/patreon-dl-docker:3.9.0).
+    # See https://github.com/djjeck/patreon-dl-docker/releases for available tags.
+    image: ghcr.io/djjeck/patreon-dl-docker:latest
+    container_name: patreon-dl
+    restart: unless-stopped
+    environment:
+      - TZ=UTC
+      - CRON_SCHEDULE=0 3 * * * # 03:00 daily (uses the time-zone above)
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./config:/config:ro
+      - ./downloads:/downloads
+      # If ./downloads is on network storage (NFS/CIFS), mount the archive browser
+      # database on local disk to avoid SQLite file-locking errors (see README):
+      # - patreon-dl-db:/downloads/.patreon-dl
+      # Optional: expose logs on the host:
+      # - ./logs:/downloads/logs
+
+# volumes:
+#   patreon-dl-db:

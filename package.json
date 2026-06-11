@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "dependencies": {
+    "patreon-dl": "3.9.0"
+  }
+}

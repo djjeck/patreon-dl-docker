@@ -1,0 +1,75 @@
+name: Auto-tag on patreon-dl bump
+
+# Fires when package.json changes on main — i.e. when Dependabot's patreon-dl
+# PR is merged. Syncs upstream example files, commits to main, then creates a
+# git tag. The tag push triggers build-push.yml to publish the versioned image.
+#
+# Requires a CONTENTS_PAT repo secret: a fine-grained PAT with "Contents: write"
+# on this repo. Without it, the tag push uses GITHUB_TOKEN and will not trigger
+# build-push.yml (images won't be published automatically).
+on:
+  push:
+    branches: [main]
+    paths:
+      - package.json
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # PAT is required so that git pushes below trigger downstream workflows.
+          # Falls back to GITHUB_TOKEN if not set (tag push won't trigger build-push.yml).
+          token: ${{ secrets.CONTENTS_PAT || github.token }}
+
+      - name: Read patreon-dl version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').dependencies['patreon-dl']")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Fetch upstream example files
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          BASE="https://raw.githubusercontent.com/patrickkfkan/patreon-dl/${TAG}"
+
+          # To sync additional upstream files, add calls here and in build-push.yml's verify step.
+          fetch_upstream() {
+            local remote="$1" local_path="$2"
+            echo "Fetching ${remote} → ${local_path}"
+            if ! curl -fsSLo "${local_path}" "${BASE}/${remote}"; then
+              echo "ERROR: could not fetch ${BASE}/${remote}" >&2
+              echo "Tag ${TAG} may not exist in upstream yet — retry once it is published." >&2
+              exit 1
+            fi
+          }
+
+          fetch_upstream example.conf config/config.conf.example
+
+      - name: Commit synced example files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add config/config.conf.example
+          if git diff --cached --quiet; then
+            echo "No changes to example files — skipping commit."
+          else
+            git commit -m "chore: sync example files for patreon-dl ${{ steps.version.outputs.tag }}"
+            git push origin main
+          fi
+
+      - name: Create and push tag
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if git rev-parse "${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists — skipping."
+          else
+            git tag "${TAG}"
+            git push origin "${TAG}"
+          fi
