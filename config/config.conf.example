@@ -1,3 +1,516 @@
-# Placeholder example
+[downloader]
+# URL of content to download
+# You can specify multiple URLs by separating them with a comma.
+# Alternatively, you can use a file to supply URLs. In this case, you would
+# provide the path to the file here. The file should contain a list of the
+# target URLs, each in its own line, along with any target-specific 'include'
+# config. See project documentation for example.
+target.url = 
 
-CI will download the current example from `patreon-dl`.
+# Cookie to include in requests; required for accessing 
+# patron-only content
+cookie = 
+
+# Whether to use status cache to quickly determine whether a target that had
+# been downloaded before has changed since the last download.
+#
+# Note: if you modify or delete any downloaded file, status cache will be 
+# unaware of it!
+#
+# Default: 1
+use.status.cache =
+
+# When to stop the downloader when downloading posts.
+#
+# Supported value:
+# - "never" - do not stop; run till the end.
+# - "previouslyDownloaded" - stop on encountering a post or product that was
+#               previously downloaded. Requires enabling "use.status.cache".
+# - "publishDateOutOfRange" - stop on encountering a post or product published
+#               outside the date range set by "posts.published.after" /
+#               "posts.published.before" if downloading posts, or
+#               "products.published.after" / "products.published.before"
+#               if downloading products, under the [include] section.
+#
+# Notes:
+# - "postPreviouslyDownloaded" is deprecated; use "previouslyDownloaded".
+# - "postPublishDateOutOfRange" is deprecated; use "publishDateOutOfRange".
+#
+# Default: "never"
+stop.on = 
+
+# Do not prompt for confirmation to proceed
+# Default: 0
+no.prompt =
+
+# Run without writing files to disk (except logs, if any). Intended for
+# testing / debugging.
+# Default: 0
+dry.run = 
+
+# Path to ffmpeg executable
+# If not set, ffmpeg will be called directly when needed, so it should be
+# in the PATH.
+path.to.ffmpeg =
+
+# Maximum video resolution to download (height in pixels)
+# Applies to Patreon-hosted videos and embedded YouTube videos when using
+# the built-in YouTube downloader.
+# Common values: 480, 720, 1080, 1440, 2160.
+# If not set or set to 0 or negative value, the best available quality
+# will be downloaded.
+# Default: not set (download best quality)
+max.video.resolution =
+
+# Path to Deno executable (https://deno.com)
+# Deno is used by the built-in YouTube downloader to run third-party code
+# in a sandboxed environment. It is optional but without it, the code runs
+# without isolation, increasing the risk of security vulnerabilities such
+# as unauthorized access, data corruption, or malicious behavior. For this
+# reason, installing Deno is strongly recommended.
+#
+# Set this option if you have Deno installed and the executable is not
+# in the system's PATH.
+path.to.deno =
+
+[output]
+# Path to directory where content is saved
+# Default: current working directory
+out.dir = 
+
+# Name format of campaign directories. A format is a string pattern consisting
+# of fields enclosed in curly braces.
+#
+# What is a campaign directory?
+# -----------------------------
+# When you download content, a directory is created for the campaign that hosts
+# the content. Content directories, which stores the downloaded content, are
+# then placed under the campaign directory.
+#
+# If campaign info could not be obtained from content, then content directory
+# will be created directly under `out.dir`.
+#
+# A format must contain at least one of the following fields:
+# `creator.vanity`
+# `creator.name`
+# 'creator.id'
+# `campaign.name'
+# 'campaign.id'
+#
+# Characters enclosed in square brackets followed by a question mark denote
+# conditional separators. If the value of a field could not be obtained or
+# is empty, the conditional separator immediately adjacent to it will be
+# omitted from the name.
+#
+# Default: "{creator.vanity}[ - ]?{campaign.name}"
+# Fallback: "campaign-{campaign.id}"
+campaign.dir.name.format =
+
+# Name format of content directories. A format is a string pattern consisting
+# of fields enclosed in curly braces.
+#
+# What is a content directory?
+# ----------------------------
+# Content can be a post or product. A directory is created for each piece of 
+# content. Downloaded items for the content are placed under this directory.
+#
+# A format must contain at least one of the following unique identifier fields:
+# `content.id`: ID of content
+# `content.slug`: last segment of the content URL.
+#
+# In addition, a format can contain the following fields:
+# `content.name`: post title or product name
+# `content.type`: type of content ('product' or 'post')
+# `content.publishDate`: publish date (ISO UTC format)
+#
+# Characters enclosed in square brackets followed by a question mark denote
+# conditional separators. If the value of a field could not be obtained or
+# is empty, the conditional separator immediately adjacent to it will be
+# omitted from the name.
+#
+# Default: "{content.id}[ - ]?{content.name}"
+# Fallback: "{content.type}-{content.id}"
+content.dir.name.format =
+
+# Filename format of a downloaded item. A format is a string pattern consisting
+# of fields enclosed in curly braces.
+#
+# A format must contain at least one of the following fields:
+# `media.id`: ID of the item downloaded (assigned by Patreon)
+# `media.filename`: can be one of the following, in order of availability:
+#  - original filename included in the item's API data; or
+#  - filename derived from the header of the response to the HTTP
+#    download request.
+#
+# In addition, a format can contain the following fields:
+# `media.type`: type of item (e.g. 'image' or 'video')
+# `media.index`: if the item is an image in the content of a post,
+#                the index of the item (starting from 0)
+# `media.variant`: where applicable, the variant of the item (e.g. 'original',
+#                  'thumbnailSmall'...for images)
+# `src.type`: the type of the items's source: 'post', 'product', 'campaign'
+#             or 'collection'
+# `src.id`: the ID of the items's source
+# `src.title`: title of the item's source
+# `src.date`: the publish / creation date of the item's source
+#
+# If `media.variant` is not included in the format, it will be appended to it
+# if `[include] -> all.media.variants` is set to '1'.
+#
+# Sometimes `media.filename` could not be obtained, in which case it will
+# be replaced with `media.id`, unless it is already present in the format.
+#
+# Characters enclosed in square brackets followed by a question mark denote
+# conditional separators. If the value of a field could not be obtained or
+# is empty, the conditional separator immediately adjacent to it will be
+# omitted from the name.
+#
+# `media.index` should be used with conditional separators, since an item
+# might not have an index. So, instead of "{media.index}-{media.filename}",
+# you would want to use "{media.index}[ - ]?{media.filename}".
+#
+# Default: "{media.filename}"
+# Fallback: "{media.type}-{media.id}"
+media.filename.format =
+
+# In the context of downloading content, the action to take when a file
+# belonging to the content already exists.
+#
+# Supported values:
+# - "overwrite": overwrite existing file
+# - "skip": skip saving the file
+# - "saveAsCopy": save the file under incremented filename (e.g. "abc.jpg"
+#                 becomes "abc (1).jpg")
+# - "saveAsCopyIfNewer": like "saveAsCopy", but only do so if the contents
+#                        have actually changed.
+#
+# Default: "skip"
+content.file.exists.action =
+
+# In the context of saving info (such as campaign or post info), the action
+# to take when a file belonging to the info already exists.
+#
+# Supported values: same as for `content.file.exists.action`
+#
+# Default: "saveAsCopyIfNewer"
+info.file.exists.action = 
+
+# API data is saved as part of info. Because it changes frequently, and usually
+# used for debugging purpose only, you can set a different action when saving
+# an API data file that already exists.
+#
+# Default: "overwrite"
+info.api.file.exists.action = 
+
+# This section contains options controlling what to include in downloads.
+# If you supply target URLs through a file, you can override options in this
+# section with target-specific ones provided in the file.
+[include]
+
+# Whether to process locked content. Default: 1
+locked.content = 
+
+# Tier critera. Posts that do not belong to the tiers comprising the criteria
+# will not be downloaded.
+# 
+# Value:
+# - Tier ID, or comma-separated string of tier IDs; or
+# - "any" (any tier)
+#
+# To see what tiers are available for a particular creator,
+# including their IDs, call 'patreon-dl' with '--list-tiers'. E.g.:
+# $ patreon-dl --list-tiers johndoe
+# $ patreon-dl --list-tiers "johndoe, janedoe"  // Multiple creators
+#
+# Some creators are identified only by their user ID, in which case you would
+# use '--list-tiers-uid' instead:
+# $ patreon-dl --list-tiers-uid "123456, 987654"
+#
+# Default: "any"
+posts.in.tier = 
+
+# Media type criteria. Posts that do not meet the criteria will not be
+# downloaded.
+#
+# General values:
+# - "any": download regardless of media type (also applies to posts that
+#          do not contain any media)
+# - "none": only download if post does not contain media
+#
+# Specific types:
+# - "image": download if post contains image(s)
+# - "video": download if post contains video
+# - "audio": download if post contains audio
+# - "attachment": download if post contains attachment(s)
+# - "podcast": download if post contains podcast video or audio
+#
+# For specific types, you can set multiple values by separating them with a
+# comma. E.g. "image, video, audio" will download posts containing any of these
+# media types, but will ignore posts containing only attachments.
+#
+# Default: "any"
+posts.with.media.type = 
+
+# Date criteria. Posts published outside the date criteria
+# will not be downloaded. You can provide an 'after' or 'before' date,
+# or both to indicate a date range.
+#
+# Date format: yyyy-MM-dd [hh:mm[:ss] [GMT]]
+# (Square brackets denote optional components)
+# - yyyy: year (4-digits)
+# - MM: month (2-digits)
+# - dd: day of month (2-digits)
+# - hh: hour (2-digits, 24-hour format)
+# - mm: minutes (2-digits)
+# - ss: seconds (2-digits)
+# - GMT: timezone (4-digits), e.g. +0800 (default: +0000)
+#/^(\d{4})-(\d{2})-(\d{2})(?: (\d{2}):(\d{2})(?::(\d{2}))?(?: (\+\d{4}))?)?/gm
+# Examples:
+# - 2024-03-12 --> same as 2024-03-12 00:00:00 +0000
+# - 2024-03-12 02:03 --> same as 2024-03-12 02:03:00 +0000
+# - 2024-03-12 02:03:59 +0800
+# 
+# Date comparison:
+# - 'after': inclusive. E.g. 2024-03-12 -> items published on this day and
+#                       after will be downloaded.
+# - 'before': exclusive. E.g. 2024-03-14 -> items published on days up to
+#                        (but not including) this date will be downloaded.
+posts.published.after =
+posts.published.before =
+
+# Same as "posts.published.after" / "posts.published.before", but applies to
+# downloading products.
+products.published.after =
+products.published.before =
+
+# Whether to save campaign info. Default: 1
+campaign.info =
+
+# Whether to save content info. Default: 1
+content.info =
+
+# The type of content media to download
+# (images, videos, audio, attachments, excluding previews).
+# 
+# General values:
+# - 1: download all types of content media
+# - 0: do not download content media
+#
+# Specific types:
+# - "image" - download image(s)
+# - "video" - download video
+# - "audio" - download audio
+# - "attachment" - download attachment(s)
+# - "file" - download file (applies to products only)
+#
+# For specific types, you can set multiple values by separating them with a
+# comma. E.g. "image, video" will download images and video, but skip audio and
+# attachments.
+#
+# Default: 1
+content.media =
+
+# The type of preview media to download, if available.
+#
+# General values:
+# - 1: download all types of preview media
+# - 0: do not download preview media
+#
+# Specific types:
+# - "image" - download image preview(s)
+# - "video" - download video preview
+# - "audio" - download audio preview
+#
+# For specific types, you can set multiple values by separating them with a
+# comma. E.g. "image, video" will download image and video previews, but skip
+# audio preview.
+#
+# Default: 1
+preview.media =
+
+# Some Patreon-hosted videos are protected by DRM. By default, they will
+# not be downloaded as they will not play properly without a decryption
+# key. You can force-download them by setting this to 1.
+#
+# Default: 0
+protected.media =
+
+# Whether to download all media variants, if available.
+# If 0, only the best quality variant will be downloaded.
+# Default: 0
+all.media.variants =
+
+# Whether to download media thumbnails, if available.
+# Thumbnails are served by the web server during browsing, which improves
+# page load speed and reduces memory usage on client side.
+# Default: 1
+media.thumbnails =
+
+# Filter media by filename pattern. Media that do not match the provided
+# pattern will not be downloaded. Filtering is performed by the minimatch
+# library (https://github.com/isaacs/minimatch) and supports glob patterns.
+#
+# By default, filename patterns are case-sensitive. To ignore case, start
+# the pattern with "!".
+#
+# Example:
+# attachments.by.filename = *.zip <- download ZIP attachments only
+# images.by.filename = *.{gif,jpg,jpeg} <- download JPEGs and GIFs only
+images.by.filename =
+audio.by.filename =
+attachments.by.filename =
+
+# Whether to fetch and save post comments. Default: 0
+comments =
+
+[request]
+# Maximum number of retries if a request or download fails
+# Default: 3
+max.retries =
+
+# Maximum number of concurrent downloads
+# Default: 10
+max.concurrent = 
+
+# Minimum time to wait between starting requests / downloads (milliseconds)
+# Default: 333
+min.time =
+
+# Sets the proxy to use. Supports HTTP, HTTPS, SOCKS4 and SOCKS5 protocols.
+# Note: FFmpeg, which is required to download videos in streaming format,
+# supports HTTP proxy only.
+# The URL follows this scheme: "protocol://[username:[password]]@hostname:port"
+# E.g.:
+# http://proxy.xyz:8080
+# socks5://user:password@socksproxy.xyz:1080
+proxy.url =
+
+# When connecting to a proxy server through SSL/TLS, this option indicates
+# whether invalid certificates should be rejected. If your proxy server uses
+# self-signed certs, you would want to set this to 0.
+#
+# Default: 1
+proxy.reject.unauthorized.tls =
+
+# Sets the User-Agent header to use when making requests. If not provided,
+# a default User-Agent will be used.
+user.agent =
+
+# External downloaders
+# --------------------
+# You can specify external downloaders for embedded videos.
+# See 'example-embed.conf' on how to do this.
+
+# Configures the console logger of patreon-dl CLI
+[logger.console]
+
+# Whether to enable this logger. Default: 1
+enabled =
+
+# Log levels are defined in the following order:
+# - debug
+# - info
+# - warn
+# - error
+#
+# Messages up to the specified level will be included in the logs
+# Default: "info"
+log.level =
+
+# Whether to include the date-time of a message. Default: 1
+include.date.time =
+
+# Whether to include the level of a message. Default: 1
+include.level =
+
+# Whether to include the originator of a message (e.g. "ProductParser")
+# Default: 1
+include.originator =
+
+# When logging errors, whether to include the error stack. Default: 0
+include.error.stack =
+
+# The string pattern used to format date-time when `include.date.time` is 1
+#
+# Date-time formatting is provided by:
+# https://github.com/felixge/node-dateformat
+#
+# Refer to the README of that project for pattern rules.
+#
+# Default: "mmm dd HH:MM:ss"
+date.time.format = 
+
+# Whether to colorize messages. If enabled, the terminal running
+# patreon-dl CLI must support ANSI colors.
+# Default: 1
+color =
+
+# File logging
+# ------------
+#
+# Aside from printing logs to console, you can also log to one or more files.
+# To do this, you define one or more file loggers.
+# 
+# Each file logger has its own section with name starting with 'logger.file.<id>'.
+# The value of <id> does not really matter but should be unique within the
+# configuration file.
+#
+# Each file logger section has the same options as [logger.console], with two
+# additional options for specifying the log file to generate:
+# - `log.dir`
+# - `log.filename`
+#
+[logger.file.1]
+
+enabled =
+
+# Path to directory of the log file
+#
+# The path can be a string pattern consisting of the following fields enclosed
+# in curly braces:
+# `out.dir`: same value specified for `out.dir` under [output] (or its default)
+# `target.url.path`: the pathname of target URL, sanitized as necessary.
+# `datetime.<date-time format>`: the date-time of logger creation. Follows the
+#                                same pattern rules as `date.time.format`.
+#
+# Default: "{out.dir}/logs/{target.url.path}"
+log.dir =
+
+# Name of log file
+#
+# The path can be a string pattern consisting of the following fields enclosed
+# in curly braces:
+# `target.url.path`: the pathname of target URL, sanitized as necessary.
+# `datetime.<date-time format>`: the date-time of logger creation. Follows the
+#                                same pattern rules as `date.time.format`.
+# `log.level`: value specified for `log.level` of this logger
+#
+# Default: "{datetime.yyyymmdd}-{log.level}.log"
+log.filename =
+
+# What to do if log file exists? One of the following values:
+# "append": append logs to existing file
+# "overwrite": overwrite the existing file
+#
+# Default: "append"
+file.exists.action = 
+
+# Following options have the same meaning as the corresponding options
+# for [logger.console]:
+
+# Default: "info"
+log.level =
+# Default: 1
+include.date.time =
+# Default 1
+include.level =
+# Default 1
+include.originator =
+# Default 0
+include.error.stack =
+# Default: "mmm dd HH:MM:ss"
+date.time.format =
+# Default: 0
+color =    
+# If enabled, only viewers supporting ANSI colors will be able to
+# display the log files properly. 
