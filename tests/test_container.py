@@ -159,6 +159,13 @@ class TestNoDb:
         )
         assert result.exit_code != 0
 
+    def test_crontab_forces_no_prompt(self, container):
+        """The scheduled command must force --no-prompt: cron has no TTY, so the
+        confirmation prompt would crash every run before downloading."""
+        result = container.exec_run(["cat", "/tmp/crontab"])
+        assert result.exit_code == 0
+        assert "patreon-dl --no-prompt -C /config/config.conf" in result.output.decode()
+
 
 # ---------------------------------------------------------------------------
 # DB-present state — one container shared across all assertions in this class

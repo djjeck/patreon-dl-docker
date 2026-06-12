@@ -56,6 +56,8 @@ Dockerfile updates.
 
 The entrypoint also validates `out.dir` in `config.conf` and exits with an error if it is set to anything other than `/downloads`.
 
+The scheduled (cron) downloader is invoked with `--no-prompt` forced on the CLI. Cron has no TTY, so patreon-dl's confirmation prompt would crash (`ENXIO ... /dev/tty`) and the run would exit before downloading anything. Forcing the flag here overrides whatever `no.prompt` is set to in `config.conf` — which keeps `config.conf.example` verbatim upstream rather than hardcoding a value into the synced example file. Manual one-shot runs go through pass-through mode and are unaffected (pass `--no-prompt` yourself if you want it).
+
 ## Dependencies
 
 | Tool        | Why it's needed                                  | Version tracking                                         |

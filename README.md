@@ -20,7 +20,7 @@ services:
       - TZ=UTC
       - CRON_SCHEDULE=0 3 * * * # 03:00 daily (uses the time-zone above)
     ports:
-      - '3000:3000'
+      - "3000:3000"
     volumes:
       - ./config:/config:ro
       - ./downloads:/downloads
@@ -87,6 +87,8 @@ Open `http://localhost:3000` — the archive browser starts automatically alongs
 ## Configuration reference
 
 [`config/config.conf.example`](config/config.conf.example) is the verbatim upstream [`example.conf`](https://github.com/patrickkfkan/patreon-dl/blob/master/example.conf). All options are documented in-file.
+
+> **Note:** the scheduled (cron) downloader always runs with `--no-prompt` forced on, regardless of the `no.prompt` value in your `config.conf`. Cron has no TTY, so leaving the confirmation prompt enabled would make every scheduled run crash before downloading. This only affects the cron flow — manual one-shot runs (below) honour whatever you set on the config file.
 
 ## Environment variables
 

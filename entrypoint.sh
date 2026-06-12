@@ -23,8 +23,13 @@ if [ -f /config/config.conf ]; then
   fi
 fi
 
-# Build the crontab for the scheduled downloader
-printf '%s patreon-dl -C /config/config.conf /config/urls.txt\n' \
+# Build the crontab for the scheduled downloader.
+# --no-prompt is forced on this unattended flow: cron has no TTY, so patreon-dl's
+# confirmation prompt would crash with "ENXIO ... /dev/tty" and the run would exit
+# before downloading anything. Forcing it on the CLI overrides whatever no.prompt is
+# (or isn't) set to in config.conf, and keeps config.conf.example verbatim upstream.
+# Manual one-shot runs go through pass-through mode above and are unaffected.
+printf '%s patreon-dl --no-prompt -C /config/config.conf /config/urls.txt\n' \
   "${CRON_SCHEDULE:-0 3 * * *}" > /tmp/crontab
 
 # If the browse DB does not exist yet, the archive server cannot start — it performs
