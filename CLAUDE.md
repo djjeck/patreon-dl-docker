@@ -47,7 +47,7 @@ Dockerfile updates.
 
 ## Entrypoint behaviour
 
-**Pass-through mode** — if arguments are passed to the container, `exec "$@"` runs them directly and exits. Used for one-shot CLI runs: `docker compose run --rm patreon-dl patreon-dl ...`. No server, no cron.
+**Pass-through mode** — if arguments are passed to the container, `exec "$@"` runs them directly and exits. Used for one-shot CLI runs: `docker compose run --rm patreon-dl patreon-dl ...`. No server, no cron. If the command is a downloading `patreon-dl` invocation (`is_downloading_command`), the preflight auth check (`require_auth`) runs first and hard-refuses on an expired or unverifiable cookie — see below. Read-only invocations (`-h`, `--help`, `--dry-run`, `--list-tiers`, `--list-tiers-uid`) and any non-`patreon-dl` command (e.g. `patreon-dl-server`, `yt-dlp`, a shell) are not guarded.
 
 **Normal mode** (no arguments) — validates config, then branches on whether the browse DB exists:
 
@@ -55,6 +55,46 @@ Dockerfile updates.
 - **DB present**: starts both `patreon-dl-server -i /downloads` (background) and `supercronic` (background), then `wait -n` — exits when either process exits so Docker can restart the container.
 
 The entrypoint also validates `out.dir` in `config.conf` and exits with an error if it is set to anything other than `/downloads`.
+
+## Preflight authentication check
+
+An expired or malformed cookie does not make patreon-dl error — it silently downloads
+whatever Patreon serves anonymous visitors (blurry previews) and, with
+`stop.on = previouslyDownloaded`, caches that degraded content as "done" so it is never
+re-fetched. `check-auth.sh` guards against this by validating the configured cookie
+against Patreon's `current_user` endpoint before any download runs. It maps the result
+to exit codes:
+
+| Exit | Meaning              | Trigger                | Manual flow & boot    | Cron flow       |
+| ---- | -------------------- | ---------------------- | --------------------- | --------------- |
+| 0    | Authenticated        | HTTP 200               | Proceed               | Run downloader  |
+| 1    | Expired/invalid      | HTTP 401               | Refuse (boot: crash)  | Skip run        |
+| 2    | No cookie configured | `cookie =` unset/empty | Proceed (anonymous)   | Run (anonymous) |
+| 3    | Inconclusive         | network error / 5xx    | Refuse — except boot¹ | Skip run        |
+
+¹ The boot check treats exit 3 as non-fatal so a transient blip at startup doesn't
+crash-loop the container; the per-run cron check re-verifies before any download.
+
+The check runs in **three places**:
+
+- **Manual / pass-through flow** (`require_auth` in `entrypoint.sh`): guards the
+  interactive download flow, including the first backfill. A human is present, so it
+  hard-refuses (exit 1) on both an expired cookie (1) and an unverifiable result (3) —
+  better than silently downloading degraded content. Proceeds only on 0 or 2.
+- **At boot** (normal mode): on exit 1 the container exits 1 and crash-loops under
+  `restart: unless-stopped`, making an expired cookie loudly visible. Exit 2/3 do not
+  block startup. _(Known limitation: crashing at boot also takes the archive browser
+  down even though browsing an existing archive needs no auth. Accepted for now; see
+  issue #7 for the planned iteration.)_
+- **Per scheduled run** (in the generated crontab): each cron tick runs `check-auth.sh`
+  first and only invokes the downloader on exit 0 or 2. Unattended, so on 1 or 3 it
+  skips the run (and logs) rather than crashing. This is what catches a cookie that
+  expires _while the container is already running_ — the boot check cannot.
+
+The endpoint is overridable via the `PATREON_AUTH_URL` env var so the test suite can
+point the check at a local mock and stay hermetic (it never reaches Patreon). The cookie
+is read verbatim from the `cookie =` line — it must be the full `Cookie` header, not just
+`session_id` (see README step 1).
 
 The scheduled (cron) downloader is invoked with `--no-prompt` forced on the CLI. Cron has no TTY, so patreon-dl's confirmation prompt would crash (`ENXIO ... /dev/tty`) and the run would exit before downloading anything. Forcing the flag here overrides whatever `no.prompt` is set to in `config.conf` — which keeps `config.conf.example` verbatim upstream rather than hardcoding a value into the synced example file. Manual one-shot runs go through pass-through mode and are unaffected (pass `--no-prompt` yourself if you want it).
 
@@ -106,8 +146,10 @@ set `TEST_IMAGE_TAG` to the image they built. Running bare `pytest` without `TES
 immediately with guidance to run `make test`, rather than silently building for several minutes.
 
 The test suite covers entrypoint behaviour only — tool smoke tests, pass-through mode,
-`out.dir` validation, the no-DB guidance branch, and the DB-present server start. It
-does not connect to Patreon or test patreon-dl's download logic.
+`out.dir` validation, the no-DB guidance branch, the DB-present server start, and the
+preflight auth-check exit codes (via a local mock endpoint on a throwaway Docker network,
+so it never reaches Patreon). It does not connect to Patreon or test patreon-dl's download
+logic.
 
 ## Upstream references
 

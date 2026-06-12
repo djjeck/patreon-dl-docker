@@ -166,6 +166,156 @@ class TestNoDb:
         assert result.exit_code == 0
         assert "patreon-dl --no-prompt -C /config/config.conf" in result.output.decode()
 
+    def test_crontab_gates_on_auth_check(self, container):
+        """The scheduled command must run check-auth.sh and only download when it
+        returns 0 (valid) or 2 (no cookie)."""
+        result = container.exec_run(["cat", "/tmp/crontab"])
+        crontab = result.output.decode()
+        assert "/check-auth.sh" in crontab
+        assert 'rc" = 0' in crontab and 'rc" = 2' in crontab
+
+
+# ---------------------------------------------------------------------------
+# Preflight auth check — check-auth.sh maps the configured cookie + endpoint
+# response to exit codes. The mock_auth_server / auth_network fixtures (conftest)
+# keep these tests hermetic; the check never reaches Patreon.
+# ---------------------------------------------------------------------------
+
+class TestAuthCheck:
+    def run_check(self, image_tag, docker_client, auth_network, config_content, status):
+        """Run /check-auth.sh against the mock returning `status`, return its exit code.
+
+        config_content is written to /config/config.conf (None = no config file).
+        """
+        env = {"PATREON_AUTH_URL": f"http://mock:8080/{status}"}
+        if config_content is not None:
+            env["_CFG"] = config_content
+            cmd = ['printf "%s" "$_CFG" > /tmp/c.conf; CONFIG_FILE=/tmp/c.conf /check-auth.sh']
+        else:
+            cmd = ["CONFIG_FILE=/nonexistent /check-auth.sh"]
+        c = docker_client.containers.run(
+            image_tag, cmd,
+            entrypoint=["bash", "-c"],
+            environment=env,
+            network=auth_network.name,
+            detach=True,
+        )
+        try:
+            return c.wait(timeout=20)["StatusCode"]
+        finally:
+            c.remove(force=True)
+
+    def test_valid_cookie_returns_0(self, image_tag, docker_client, auth_network, mock_auth_server):
+        rc = self.run_check(image_tag, docker_client, auth_network,
+                            "cookie = session_id=valid\n", 200)
+        assert rc == 0
+
+    def test_expired_cookie_returns_1(self, image_tag, docker_client, auth_network, mock_auth_server):
+        rc = self.run_check(image_tag, docker_client, auth_network,
+                            "cookie = session_id=expired\n", 401)
+        assert rc == 1
+
+    def test_inconclusive_returns_3(self, image_tag, docker_client, auth_network, mock_auth_server):
+        rc = self.run_check(image_tag, docker_client, auth_network,
+                            "cookie = session_id=whatever\n", 503)
+        assert rc == 3
+
+    def test_no_cookie_returns_2(self, image_tag, docker_client, auth_network, mock_auth_server):
+        rc = self.run_check(image_tag, docker_client, auth_network, "cookie =\n", 200)
+        assert rc == 2
+
+    def test_no_config_returns_2(self, image_tag, docker_client, auth_network, mock_auth_server):
+        rc = self.run_check(image_tag, docker_client, auth_network, None, 200)
+        assert rc == 2
+
+    def test_commented_cookie_returns_2(self, image_tag, docker_client, auth_network, mock_auth_server):
+        rc = self.run_check(image_tag, docker_client, auth_network,
+                            "# cookie = session_id=ignored\n", 200)
+        assert rc == 2
+
+
+# ---------------------------------------------------------------------------
+# Pass-through guard — the interactive download flow (docker compose run ...
+# patreon-dl ...) must be auth-checked too. A failed check refuses before exec;
+# read-only invocations and non-patreon-dl commands run unguarded.
+#
+# These tests assert on the entrypoint's "refusing to run" message rather than
+# exit code, since an unguarded patreon-dl command still runs (and may fail for
+# unrelated network reasons) — what matters is whether the guard blocked it.
+# ---------------------------------------------------------------------------
+
+REFUSE_MSG = "refusing to run"
+
+
+class TestPassThroughGuard:
+    def run_passthrough(self, image_tag, docker_client, auth_network, cmd, status,
+                        cookie="cookie = session_id=x\n"):
+        """Run the entrypoint in pass-through mode with `cmd`, against the mock
+        returning `status`. Returns (exit_code, combined_logs)."""
+        env = {"PATREON_AUTH_URL": f"http://mock:8080/{status}", "_CFG": cookie}
+        # Override the entrypoint with a small bootstrap: write the config file, then
+        # exec the real entrypoint with the pass-through args. With entrypoint
+        # `bash -c <inner> _`, $0 is "_" and "$@" is the pass-through command, so the
+        # real /entrypoint.sh receives exactly `cmd` as its positional args.
+        inner = 'printf "%s" "$_CFG" > /config/config.conf; exec /entrypoint.sh "$@"'
+        c = docker_client.containers.run(
+            image_tag,
+            command=cmd,
+            entrypoint=["bash", "-c", inner, "_"],
+            environment=env,
+            network=auth_network.name,
+            detach=True,
+        )
+        try:
+            code = c.wait(timeout=30)["StatusCode"]
+            return code, container_logs(c)
+        finally:
+            c.remove(force=True)
+
+    def test_download_refused_on_expired_cookie(self, image_tag, docker_client, auth_network, mock_auth_server):
+        """A real download invocation must be refused when the cookie is expired (401)."""
+        code, logs = self.run_passthrough(
+            image_tag, docker_client, auth_network,
+            ["patreon-dl", "-C", "/config/config.conf", "/config/urls.txt"], 401)
+        assert REFUSE_MSG in logs
+        assert code == 1
+
+    def test_download_refused_on_inconclusive(self, image_tag, docker_client, auth_network, mock_auth_server):
+        """A real download invocation must be refused when auth can't be verified (5xx)."""
+        code, logs = self.run_passthrough(
+            image_tag, docker_client, auth_network,
+            ["patreon-dl", "-C", "/config/config.conf", "/config/urls.txt"], 503)
+        assert REFUSE_MSG in logs
+        assert code == 1
+
+    def test_dry_run_not_guarded(self, image_tag, docker_client, auth_network, mock_auth_server):
+        """--dry-run writes nothing, so it must not be blocked even with a bad cookie."""
+        _, logs = self.run_passthrough(
+            image_tag, docker_client, auth_network,
+            ["patreon-dl", "--dry-run", "-C", "/config/config.conf", "/config/urls.txt"], 401)
+        assert REFUSE_MSG not in logs
+
+    def test_list_tiers_not_guarded(self, image_tag, docker_client, auth_network, mock_auth_server):
+        """--list-tiers is a read-only query, not a download — must not be blocked."""
+        _, logs = self.run_passthrough(
+            image_tag, docker_client, auth_network,
+            ["patreon-dl", "--list-tiers", "someone"], 401)
+        assert REFUSE_MSG not in logs
+
+    def test_help_not_guarded(self, image_tag, docker_client, auth_network, mock_auth_server):
+        """-h must not be blocked."""
+        _, logs = self.run_passthrough(
+            image_tag, docker_client, auth_network, ["patreon-dl", "-h"], 401)
+        assert REFUSE_MSG not in logs
+
+    def test_non_patreon_dl_command_not_guarded(self, image_tag, docker_client, auth_network, mock_auth_server):
+        """A non-patreon-dl command must pass through unguarded even with a bad cookie."""
+        code, logs = self.run_passthrough(
+            image_tag, docker_client, auth_network, ["echo", "hi"], 401)
+        assert REFUSE_MSG not in logs
+        assert code == 0
+        assert "hi" in logs
+
 
 # ---------------------------------------------------------------------------
 # DB-present state — one container shared across all assertions in this class

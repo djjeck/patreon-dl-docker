@@ -48,7 +48,7 @@ services:
 
 Log in to [patreon.com](https://patreon.com) in your browser, then copy the **full `Cookie` request header** — not just the `session_id` value. The easiest way: open your browser's developer tools → Network tab, reload patreon.com, click any request to `patreon.com`, and under **Request Headers** copy the entire `Cookie:` value (a string of `name=value; name=value; …` pairs). See the upstream guide: [How to obtain Cookie](https://github.com/patrickkfkan/patreon-dl/wiki/How-to-obtain-Cookie).
 
-> Copying only `session_id` will appear to work but silently downloads **unauthenticated public content** (blurry previews instead of your patron-only media). Always copy the complete header.
+> Use the complete header, not just `session_id`. If the cookie is incomplete or expired the container refuses to download rather than fetching the unauthenticated public version of your content — see [Cookie validation](#cookie-validation) below.
 
 ### 2. Create your config
 
@@ -91,6 +91,17 @@ Open `http://localhost:3000` — the archive browser starts automatically alongs
 [`config/config.conf.example`](config/config.conf.example) is the verbatim upstream [`example.conf`](https://github.com/patrickkfkan/patreon-dl/blob/master/example.conf). All options are documented in-file.
 
 > **Note:** the scheduled (cron) downloader always runs with `--no-prompt` forced on, regardless of the `no.prompt` value in your `config.conf`. Cron has no TTY, so leaving the confirmation prompt enabled would make every scheduled run crash before downloading. This only affects the cron flow — manual one-shot runs (below) honour whatever you set on the config file.
+
+## Cookie validation
+
+An expired or malformed cookie does **not** make patreon-dl fail — it silently downloads the blurry public-preview version of your patron-only content, and (with `stop.on = previouslyDownloaded`) caches it as already-downloaded so it is never re-fetched. To catch this, the container validates your cookie against Patreon before downloading:
+
+- **Manual one-shot downloads** (`docker compose run --rm patreon-dl patreon-dl ...`, including the first backfill in step 3): the check runs before the download starts. If the cookie is expired/invalid — or can't be verified — the command refuses to run and exits non-zero. `--dry-run`, `--list-tiers`, and `-h` are not guarded (they write no content).
+- **At startup** of the ongoing-sync container, an expired/invalid cookie makes the container exit and crash-loop (visible in `docker ps`). Re-export the full `Cookie` header (see step 1) and restart. A transient network blip at startup does not block boot — the per-run check below re-verifies.
+- **Before each scheduled run**, the same check runs again; if the cookie has expired since startup, that run is skipped (and logged) rather than downloading degraded content.
+- If no `cookie` is configured, the check is skipped so intentional public-content downloads work.
+
+A transient network error or Patreon outage is treated as inconclusive — a scheduled run is skipped and retried on the next tick, and a manual run refuses rather than risk downloading degraded content.
 
 ## Environment variables
 

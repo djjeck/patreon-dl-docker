@@ -34,7 +34,8 @@ RUN npm install
 ENV PATH="/app/node_modules/.bin:$PATH"
 
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY check-auth.sh /check-auth.sh
+RUN chmod +x /entrypoint.sh /check-auth.sh
 
 VOLUME ["/config", "/downloads"]
 WORKDIR /downloads
