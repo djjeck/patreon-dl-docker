@@ -44,9 +44,11 @@ services:
 >
 > For step 4, use `docker run -d` with the same flags, plus `--name patreon-dl --restart unless-stopped -e TZ=UTC -e CRON_SCHEDULE="0 3 * * *" -p 3000:3000`.
 
-### 1. Get your Patreon session cookie
+### 1. Get your Patreon cookie
 
-Log in to [patreon.com](https://patreon.com) in your browser, then copy the value of the `session_id` cookie. You can find it in your browser's developer tools under Application → Cookies.
+Log in to [patreon.com](https://patreon.com) in your browser, then copy the **full `Cookie` request header** — not just the `session_id` value. The easiest way: open your browser's developer tools → Network tab, reload patreon.com, click any request to `patreon.com`, and under **Request Headers** copy the entire `Cookie:` value (a string of `name=value; name=value; …` pairs). See the upstream guide: [How to obtain Cookie](https://github.com/patrickkfkan/patreon-dl/wiki/How-to-obtain-Cookie).
+
+> Copying only `session_id` will appear to work but silently downloads **unauthenticated public content** (blurry previews instead of your patron-only media). Always copy the complete header.
 
 ### 2. Create your config
 
@@ -57,7 +59,7 @@ cp config/urls.txt.example config/urls.txt
 
 Edit `config/config.conf` — at minimum set these two values:
 
-- `cookie` — your Patreon `session_id` cookie (required for patron-only content)
+- `cookie` — your full Patreon `Cookie` header (see step 1; required for patron-only content)
 - `stop.on = previouslyDownloaded` — so each run only processes new posts (see step 4)
 
 `out.dir` must not be set — downloads always go to `/downloads` (the fixed output directory), which the archive server reads from. Setting it to a different path will cause a startup error.
@@ -130,7 +132,7 @@ Image tags track the patreon-dl version: `3.x.y` and `3.x` tags are published fo
 ## Known limitations
 
 - **DRM-protected videos**: some Patreon-hosted videos are DRM-protected and will be skipped by patreon-dl. Gaps in the archive for these are expected.
-- **Session expiry**: the `session_id` cookie expires periodically. When patreon-dl starts failing with authentication errors, re-export the cookie from your browser and update `config.conf`.
+- **Session expiry**: the session cookie expires periodically. When patreon-dl starts failing with authentication errors, re-export the full `Cookie` header from your browser (see step 1) and update `config.conf`.
 - **Rate limiting**: during large initial backfills, run creators sequentially. Parallelizing requests increases the risk of session invalidation.
 
 ## License
