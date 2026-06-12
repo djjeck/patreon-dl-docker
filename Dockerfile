@@ -35,7 +35,15 @@ ENV PATH="/app/node_modules/.bin:$PATH"
 
 COPY entrypoint.sh /entrypoint.sh
 COPY check-auth.sh /check-auth.sh
-RUN chmod +x /entrypoint.sh /check-auth.sh
+COPY healthcheck.sh /healthcheck.sh
+RUN chmod +x /entrypoint.sh /check-auth.sh /healthcheck.sh
+
+# Default healthcheck — applies automatically to any container from this image (including
+# via compose) with no compose change. Reports unhealthy when the session cookie is held
+# (rejected by Patreon; refresh it) or the archive server stops responding. Lenient
+# thresholds suit a resource-constrained host; start-period covers slow first server bind.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
+  CMD /healthcheck.sh
 
 VOLUME ["/config", "/downloads"]
 WORKDIR /downloads

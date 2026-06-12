@@ -3,15 +3,16 @@ set -e
 
 # Run the preflight auth check and act on the result as a present, interactive user:
 # proceed only when the cookie is valid (0) or intentionally absent (2); hard-refuse on
-# an expired cookie (1) or an inconclusive result (3). Used for the boot check and the
-# manual pass-through flow — both have a human watching, so a hard stop beats silently
-# downloading degraded content or skipping.
+# an expired/held cookie (1/4) or an inconclusive result (3). Used only for the manual
+# pass-through flow — a human is watching a one-shot run, so a hard stop beats silently
+# downloading degraded content. (The boot and cron flows do not refuse; they keep the
+# container up and let the hold + healthcheck signal the problem.)
 require_auth() {
   local rc=0
   /check-auth.sh || rc=$?
   case "$rc" in
     0|2) return 0 ;;
-    1)
+    1|4)
       echo "patreon-dl: refusing to run — session cookie is expired or invalid." >&2
       exit 1
       ;;
@@ -64,27 +65,23 @@ if [ -f /config/config.conf ]; then
   fi
 fi
 
-# Preflight auth check at boot. Unlike require_auth (used for the manual flow), the boot
-# check deliberately treats an inconclusive result (exit 3) as non-fatal: a transient
-# network/5xx blip at startup must not crash-loop the container — the per-run cron check
-# will re-verify before any download. Only a definitive expired cookie (exit 1) crashes
-# the container, making the failure visible under restart: unless-stopped. A missing
-# cookie (exit 2) is intentional anonymous use.
-# `|| auth_rc=$?` keeps the non-zero exits (1/2/3) from tripping `set -e`.
-auth_rc=0
-/check-auth.sh || auth_rc=$?
-if [ "$auth_rc" = 1 ]; then
-  echo "patreon-dl: refusing to start — session cookie is expired or invalid." >&2
-  exit 1
-fi
+# Preflight auth check at boot. This never crashes the container: a bad cookie writes a
+# hold (in check-auth.sh) and the default healthcheck turns the container unhealthy, which
+# signals the user to refresh the cookie while the archive UI stays up. A hold also stops
+# the boot check from re-contacting Patreon for a cookie already known to be bad. The
+# result here is informational — the per-run cron check and the healthcheck enforce it.
+# `|| true` keeps any non-zero exit from tripping `set -e`.
+/check-auth.sh || true
 
 # Build the crontab for the scheduled downloader.
-# Each scheduled run is gated by check-auth.sh: the downloader runs only when the
-# cookie is valid (exit 0) or intentionally absent (exit 2). On an expired cookie
-# (exit 1) or an inconclusive result (exit 3) the run is skipped rather than allowed
-# to download degraded content — the cron entry still exits 0 so supercronic does not
-# flag a job failure. This per-run check is what catches a cookie that expires while
-# the container is already running, which the boot check above cannot.
+# Each scheduled run is gated by check-auth.sh: the downloader runs only when the cookie
+# is valid (exit 0) or intentionally absent (exit 2). On an expired/held cookie (exit 1/4)
+# or an inconclusive result (exit 3) the run is skipped rather than allowed to download
+# degraded content — the cron entry still exits 0 so supercronic does not flag a job
+# failure. This per-run check catches a cookie that expires while the container is already
+# running; it also re-validates after the user re-pastes a cookie (check-auth.sh clears
+# the hold when the cookie hash changes), which is what brings the container back to
+# healthy without a restart.
 #
 # --no-prompt is forced on this unattended flow: cron has no TTY, so patreon-dl's
 # confirmation prompt would crash with "ENXIO ... /dev/tty" and the run would exit
@@ -120,6 +117,12 @@ After its first run, restart the container to bring up the archive browser too.
 EOF
   exec supercronic /tmp/crontab
 fi
+
+# Mark that the archive server is expected to be running, so the healthcheck knows to
+# probe :3000 (the no-DB branch above exits before here and never sets this, so the
+# healthcheck skips the server probe in scheduler-only mode). The marker lives in /tmp
+# so it resets on every container start.
+touch /tmp/patreon-dl-server-expected
 
 # Start the archive browser
 patreon-dl-server -i /downloads &

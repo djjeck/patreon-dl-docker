@@ -5,6 +5,9 @@ services:
     image: ghcr.io/djjeck/patreon-dl-docker:latest
     container_name: patreon-dl
     restart: unless-stopped
+    # Do NOT add a `healthcheck:` here. The image ships a default healthcheck that
+    # reports unhealthy when your session cookie expires; overriding it loses that
+    # signal. See the "Healthcheck" section in the README.
     environment:
       - TZ=UTC
       - CRON_SCHEDULE=0 3 * * * # 03:00 daily (uses the time-zone above)

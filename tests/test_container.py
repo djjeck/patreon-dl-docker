@@ -6,6 +6,7 @@ same state (TestNoDb, TestDbPresent), a single class-scoped container is started
 once for the whole class rather than per-test.
 """
 
+import shlex
 import sqlite3
 import time
 
@@ -183,11 +184,12 @@ class TestNoDb:
 
 class TestAuthCheck:
     def run_check(self, image_tag, docker_client, auth_network, config_content, status):
-        """Run /check-auth.sh against the mock returning `status`, return its exit code.
+        """Run /check-auth.sh once against the mock returning `status`; return its exit code.
 
-        config_content is written to /config/config.conf (None = no config file).
+        config_content is written to /config/config.conf (None = no config file). The hold
+        file lives in a fresh per-container location so runs are independent.
         """
-        env = {"PATREON_AUTH_URL": f"http://mock:8080/{status}"}
+        env = {"PATREON_AUTH_URL": f"http://mock:8080/{status}", "HOLD_FILE": "/tmp/hold"}
         if config_content is not None:
             env["_CFG"] = config_content
             cmd = ['printf "%s" "$_CFG" > /tmp/c.conf; CONFIG_FILE=/tmp/c.conf /check-auth.sh']
@@ -204,6 +206,37 @@ class TestAuthCheck:
             return c.wait(timeout=20)["StatusCode"]
         finally:
             c.remove(force=True)
+
+    def run_sequence(self, image_tag, docker_client, auth_network, steps):
+        """Run several check-auth.sh invocations in ONE container so the on-disk hold
+        persists between them. `steps` is a list of (config_content, status) tuples.
+        Returns the list of exit codes, one per step."""
+        # Build a script that writes each config, runs the check, and prints "rc<i>=<n>".
+        lines = []
+        for i, (cfg, status) in enumerate(steps):
+            lines.append(f'printf "%s" {shlex.quote(cfg)} > /tmp/c.conf')
+            lines.append(
+                f'PATREON_AUTH_URL=http://mock:8080/{status} CONFIG_FILE=/tmp/c.conf '
+                f'HOLD_FILE=/tmp/hold /check-auth.sh; echo "rc{i}=$?"'
+            )
+        script = "; ".join(lines)
+        c = docker_client.containers.run(
+            image_tag, [script],
+            entrypoint=["bash", "-c"],
+            network=auth_network.name,
+            detach=True,
+        )
+        try:
+            c.wait(timeout=30)
+            logs = container_logs(c)
+        finally:
+            c.remove(force=True)
+        markers = dict(
+            line.split("=", 1)
+            for line in logs.splitlines()
+            if line.startswith("rc") and "=" in line
+        )
+        return [int(markers[f"rc{i}"]) for i in range(len(steps))]
 
     def test_valid_cookie_returns_0(self, image_tag, docker_client, auth_network, mock_auth_server):
         rc = self.run_check(image_tag, docker_client, auth_network,
@@ -232,6 +265,32 @@ class TestAuthCheck:
         rc = self.run_check(image_tag, docker_client, auth_network,
                             "# cookie = session_id=ignored\n", 200)
         assert rc == 2
+
+    def test_held_cookie_skips_network_call(self, image_tag, docker_client, auth_network, mock_auth_server):
+        """A 401 writes a hold; a second check with the same cookie returns 4 (held)
+        without contacting the endpoint — even if the endpoint would now return 200."""
+        codes = self.run_sequence(image_tag, docker_client, auth_network, [
+            ("cookie = session_id=bad\n", 401),  # writes hold
+            ("cookie = session_id=bad\n", 200),  # same cookie -> held, no network call
+        ])
+        assert codes == [1, 4]
+
+    def test_cookie_change_clears_hold_and_revalidates(self, image_tag, docker_client, auth_network, mock_auth_server):
+        """After a hold, a different cookie value clears the hold and re-validates."""
+        codes = self.run_sequence(image_tag, docker_client, auth_network, [
+            ("cookie = session_id=bad\n", 401),    # writes hold for 'bad'
+            ("cookie = session_id=fixed\n", 200),  # different cookie -> clear hold, 200
+        ])
+        assert codes == [1, 0]
+
+    def test_inconclusive_does_not_write_hold(self, image_tag, docker_client, auth_network, mock_auth_server):
+        """An inconclusive result must not create a hold: a later valid check returns 0,
+        not 4."""
+        codes = self.run_sequence(image_tag, docker_client, auth_network, [
+            ("cookie = session_id=x\n", 503),  # inconclusive, no hold
+            ("cookie = session_id=x\n", 200),  # would be 4 if a hold had been written
+        ])
+        assert codes == [3, 0]
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +374,105 @@ class TestPassThroughGuard:
         assert REFUSE_MSG not in logs
         assert code == 0
         assert "hi" in logs
+
+
+# ---------------------------------------------------------------------------
+# Healthcheck — healthcheck.sh reports unhealthy when an auth hold is present
+# or (when the server is expected) the archive server is unreachable. Tested
+# directly with env overrides so no real server or network is needed.
+# ---------------------------------------------------------------------------
+
+class TestHealthcheck:
+    def run_health(self, image_tag, docker_client, setup):
+        """Run /healthcheck.sh after a setup script that arranges hold/marker/server
+        state. Returns (exit_code, logs)."""
+        script = f"{setup}; HOLD_FILE=/tmp/hold SERVER_MARKER=/tmp/marker " \
+                 f"SERVER_URL=http://127.0.0.1:3000 /healthcheck.sh"
+        c = docker_client.containers.run(
+            image_tag, [script], entrypoint=["bash", "-c"], detach=True)
+        try:
+            code = c.wait(timeout=15)["StatusCode"]
+            return code, container_logs(c)
+        finally:
+            c.remove(force=True)
+
+    def test_healthy_no_hold_no_server_expected(self, image_tag, docker_client):
+        """No hold and no server marker (scheduler-only mode) -> healthy."""
+        code, _ = self.run_health(image_tag, docker_client, "true")
+        assert code == 0
+
+    def test_unhealthy_when_held(self, image_tag, docker_client):
+        """A present hold file -> unhealthy, with the refresh-cookie reason logged."""
+        code, logs = self.run_health(image_tag, docker_client, "echo somehash > /tmp/hold")
+        assert code == 1
+        assert "downloads are held" in logs
+
+    def test_unhealthy_when_server_expected_but_down(self, image_tag, docker_client):
+        """Server marker present but nothing listening on :3000 -> unhealthy."""
+        code, logs = self.run_health(image_tag, docker_client, "touch /tmp/marker")
+        assert code == 1
+        assert "not responding" in logs
+
+    def test_hold_takes_precedence_over_server(self, image_tag, docker_client):
+        """When held, the hold reason is reported regardless of server state."""
+        code, logs = self.run_health(
+            image_tag, docker_client, "echo h > /tmp/hold; touch /tmp/marker")
+        assert code == 1
+        assert "downloads are held" in logs
+
+
+# ---------------------------------------------------------------------------
+# Boot with an expired cookie must NOT crash — the container stays up (server
+# running), a hold is written, and the healthcheck reports unhealthy.
+# ---------------------------------------------------------------------------
+
+class TestBootWithBadCookie:
+    @pytest.fixture(scope="class")
+    def container(self, image_tag, docker_client, auth_network, mock_auth_server, tmp_path_factory):
+        dirs = tmp_path_factory.mktemp("badcookie")
+        config_dir = dirs / "config"
+        config_dir.mkdir()
+        (config_dir / "config.conf").write_text("cookie = session_id=expired\n")
+        downloads_dir = dirs / "downloads"
+        db_dir = downloads_dir / ".patreon-dl"
+        db_dir.mkdir(parents=True)
+        conn = sqlite3.connect(str(db_dir / "db.sqlite"))
+        conn.close()
+
+        c = docker_client.containers.run(
+            image_tag,
+            detach=True,
+            environment={"CRON_SCHEDULE": NEVER_FIRES,
+                         "PATREON_AUTH_URL": "http://mock:8080/401"},
+            network=auth_network.name,
+            volumes={
+                str(config_dir): {"bind": "/config", "mode": "ro"},
+                str(downloads_dir): {"bind": "/downloads", "mode": "rw"},
+            },
+        )
+        time.sleep(4)  # let the boot path run the auth check and start the server
+        yield c, downloads_dir
+        c.stop(timeout=5)
+        c.remove()
+
+    def test_container_stays_running(self, container):
+        """An expired cookie at boot must not crash the container."""
+        c, _ = container
+        c.reload()
+        assert c.status == "running"
+
+    def test_hold_file_written(self, container):
+        """The boot auth check must write the hold file on a 401."""
+        c, downloads_dir = container
+        hold = downloads_dir / ".patreon-dl" / ".cookie-hold"
+        assert hold.exists()
+
+    def test_reports_unhealthy(self, container):
+        """The healthcheck must report unhealthy while the cookie is held."""
+        c, _ = container
+        result = c.exec_run(["/healthcheck.sh"])
+        assert result.exit_code == 1
+        assert "held" in result.output.decode()
 
 
 # ---------------------------------------------------------------------------

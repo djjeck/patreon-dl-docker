@@ -16,6 +16,9 @@ services:
     image: ghcr.io/djjeck/patreon-dl-docker:latest
     container_name: patreon-dl
     restart: unless-stopped
+    # Do NOT add a `healthcheck:` here. The image ships a default healthcheck that
+    # reports unhealthy when your session cookie expires; overriding it loses that
+    # signal. See the Healthcheck section below.
     environment:
       - TZ=UTC
       - CRON_SCHEDULE=0 3 * * * # 03:00 daily (uses the time-zone above)
@@ -48,7 +51,7 @@ services:
 
 Log in to [patreon.com](https://patreon.com) in your browser, then copy the **full `Cookie` request header** — not just the `session_id` value. The easiest way: open your browser's developer tools → Network tab, reload patreon.com, click any request to `patreon.com`, and under **Request Headers** copy the entire `Cookie:` value (a string of `name=value; name=value; …` pairs). See the upstream guide: [How to obtain Cookie](https://github.com/patrickkfkan/patreon-dl/wiki/How-to-obtain-Cookie).
 
-> Use the complete header, not just `session_id`. If the cookie is incomplete or expired the container refuses to download rather than fetching the unauthenticated public version of your content — see [Cookie validation](#cookie-validation) below.
+> Use the complete header, not just `session_id`. If the cookie is incomplete or expired the container pauses downloads and reports unhealthy rather than fetching the unauthenticated public version of your content — see [Cookie validation](#cookie-validation) below.
 
 ### 2. Create your config
 
@@ -97,11 +100,17 @@ Open `http://localhost:3000` — the archive browser starts automatically alongs
 An expired or malformed cookie does **not** make patreon-dl fail — it silently downloads the blurry public-preview version of your patron-only content, and (with `stop.on = previouslyDownloaded`) caches it as already-downloaded so it is never re-fetched. To catch this, the container validates your cookie against Patreon before downloading:
 
 - **Manual one-shot downloads** (`docker compose run --rm patreon-dl patreon-dl ...`, including the first backfill in step 3): the check runs before the download starts. If the cookie is expired/invalid — or can't be verified — the command refuses to run and exits non-zero. `--dry-run`, `--list-tiers`, and `-h` are not guarded (they write no content).
-- **At startup** of the ongoing-sync container, an expired/invalid cookie makes the container exit and crash-loop (visible in `docker ps`). Re-export the full `Cookie` header (see step 1) and restart. A transient network blip at startup does not block boot — the per-run check below re-verifies.
-- **Before each scheduled run**, the same check runs again; if the cookie has expired since startup, that run is skipped (and logged) rather than downloading degraded content.
+- **The ongoing-sync container** keeps running even with a bad cookie, so the archive browser stays available. When the cookie is rejected, the container **reports unhealthy** (visible in `docker ps`) and pauses downloads — this is your signal to refresh the cookie. It does **not** crash-loop.
+- **Before each scheduled run**, the cookie is re-checked; a rejected cookie skips that run (and is logged) rather than downloading degraded content.
 - If no `cookie` is configured, the check is skipped so intentional public-content downloads work.
 
-A transient network error or Patreon outage is treated as inconclusive — a scheduled run is skipped and retried on the next tick, and a manual run refuses rather than risk downloading degraded content.
+**Recovering from an expired cookie:** re-export the full `Cookie` header (see step 1) and update `config.conf`. The next scheduled run (or a container restart) detects the changed cookie, clears the pause, re-validates, and the container returns to healthy — no manual intervention beyond updating the config. While a cookie is paused, the container does **not** re-contact Patreon for it, so a dead cookie cannot get your IP throttled.
+
+A transient network error or Patreon outage is treated as inconclusive — it does not pause downloads; a scheduled run is skipped and retried on the next tick, and a manual run refuses rather than risk downloading degraded content.
+
+### Healthcheck
+
+The image ships a default `HEALTHCHECK` (no Compose change needed). The container is **unhealthy** when the cookie is paused (see above) or the archive browser stops responding on port 3000; otherwise **healthy**. The reason is written to the container logs. You can watch it with `docker inspect --format '{{.State.Health.Status}}' patreon-dl` or in `docker ps`.
 
 ## Environment variables
 
