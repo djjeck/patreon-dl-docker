@@ -1,4 +1,5 @@
 downloads/
 node_modules/
+__pycache__/
 config/config.conf
 config/urls.txt
