@@ -1,5 +1,6 @@
 downloads/
 node_modules/
 __pycache__/
+.venv/
 config/config.conf
 config/urls.txt

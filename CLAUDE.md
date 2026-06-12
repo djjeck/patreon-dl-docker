@@ -76,18 +76,32 @@ add it to both functions to include it in the automated sync.
 
 ## Testing a build locally
 
-Run the integration test suite (builds the image automatically if `TEST_IMAGE_TAG` is not set):
+The canonical entrypoint is the `Makefile` — no manual setup, no global `pip install`:
 
 ```sh
-pip install -r requirements-test.txt
-pytest -v
+make test        # set up the venv, build the image (live build log), then run the suite
+make test-fast   # run the suite against an already-built image (skips the rebuild)
+make build       # just build the test image
+make clean       # remove the test image
+make clean-venv  # remove the .venv test virtualenv
+make help        # list targets
 ```
 
-To skip the image build (e.g. after `docker build -t myimage:local .`):
+`make test` manages everything itself:
 
-```sh
-TEST_IMAGE_TAG=myimage:local pytest -v
-```
+1. Creates a `.venv/` (gitignored) and installs `requirements-test.txt` into it. This step is
+   skipped on subsequent runs unless `requirements-test.txt` changes, and it sidesteps PEP 668
+   (externally-managed Python) since a venv is never externally managed.
+2. Builds the image with `docker build`, so the **build log is visible live in your terminal** —
+   the build takes several minutes on a cold cache (apt, npm, Deno, supercronic).
+3. Runs pytest with `TEST_IMAGE_TAG` set, so pytest reuses that image instead of building one
+   itself.
+
+Iterate on tests with `make test-fast` (reuses the existing image).
+
+The suite never builds the image itself — building is owned by the Makefile and by CI, which both
+set `TEST_IMAGE_TAG` to the image they built. Running bare `pytest` without `TEST_IMAGE_TAG` exits
+immediately with guidance to run `make test`, rather than silently building for several minutes.
 
 The test suite covers entrypoint behaviour only — tool smoke tests, pass-through mode,
 `out.dir` validation, the no-DB guidance branch, and the DB-present server start. It
